@@ -250,48 +250,31 @@ Java_com_k2fsa_sherpa_onnx_OfflineTts_generateWithCallbackImpl(
   const char *p_text = env->GetStringUTFChars(text, nullptr);
 
   std::function<int32_t(const float *, int32_t, float)> callback_wrapper =
-      [env, callback](const float *samples, int32_t n,
-                      float /*progress*/) -> int {
-    jclass cls = env->GetObjectClass(callback);
+      [env, callback](const float *samples, int32_t n, float progress) -> int {
+        jclass cls = env->GetObjectClass(callback);
 
-#if 0
-        // this block is for debugging only
-        // see also
-        // https://jnjosh.com/posts/kotlinfromcpp/
-        jmethodID classMethodId =
-            env->GetMethodID(cls, "getClass", "()Ljava/lang/Class;");
-        jobject klassObj = env->CallObjectMethod(callback, classMethodId);
-        auto klassObject = env->GetObjectClass(klassObj);
-        auto nameMethodId =
-            env->GetMethodID(klassObject, "getName", "()Ljava/lang/String;");
-        jstring classString =
-            (jstring)env->CallObjectMethod(klassObj, nameMethodId);
-        auto className = env->GetStringUTFChars(classString, NULL);
-        SHERPA_ONNX_LOGE("name is: %s", className);
-        env->ReleaseStringUTFChars(classString, className);
-#endif
+        // Update method signature to accept FloatArray + float
+        jmethodID mid = env->GetMethodID(cls, "invoke", "([FF)Ljava/lang/Integer;");
+        if (mid == nullptr) {
+          SHERPA_ONNX_LOGE("Failed to get the callback. Ignore it.");
+          return 1;
+        }
 
-    jmethodID mid = env->GetMethodID(cls, "invoke", "([F)Ljava/lang/Integer;");
-    if (mid == nullptr) {
-      SHERPA_ONNX_LOGE("Failed to get the callback. Ignore it.");
-      return 1;
-    }
+        jfloatArray samples_arr = env->NewFloatArray(n);
+        env->SetFloatArrayRegion(samples_arr, 0, n, samples);
 
-    jfloatArray samples_arr = env->NewFloatArray(n);
-    env->SetFloatArrayRegion(samples_arr, 0, n, samples);
-
-    jobject should_continue = env->CallObjectMethod(callback, mid, samples_arr);
-    jclass jklass = env->GetObjectClass(should_continue);
-    jmethodID int_value_mid = env->GetMethodID(jklass, "intValue", "()I");
-    return env->CallIntMethod(should_continue, int_value_mid);
+        // Pass progress along with the samples
+        jobject should_continue = env->CallObjectMethod(callback, mid, samples_arr, progress);
+        jclass jklass = env->GetObjectClass(should_continue);
+        jmethodID int_value_mid = env->GetMethodID(jklass, "intValue", "()I");
+        return env->CallIntMethod(should_continue, int_value_mid);
   };
 
   auto tts = reinterpret_cast<sherpa_onnx::OfflineTts *>(ptr);
   auto audio = tts->Generate(p_text, sid, speed, callback_wrapper);
 
   jfloatArray samples_arr = env->NewFloatArray(audio.samples.size());
-  env->SetFloatArrayRegion(samples_arr, 0, audio.samples.size(),
-                           audio.samples.data());
+  env->SetFloatArrayRegion(samples_arr, 0, audio.samples.size(), audio.samples.data());
 
   jobjectArray obj_arr = (jobjectArray)env->NewObjectArray(
       2, env->FindClass("java/lang/Object"), nullptr);
@@ -303,6 +286,7 @@ Java_com_k2fsa_sherpa_onnx_OfflineTts_generateWithCallbackImpl(
 
   return obj_arr;
 }
+
 
 SHERPA_ONNX_EXTERN_C
 JNIEXPORT jboolean JNICALL Java_com_k2fsa_sherpa_onnx_GeneratedAudio_saveImpl(
